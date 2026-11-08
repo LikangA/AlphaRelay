@@ -64,6 +64,8 @@ class MainActivity : AppCompatActivity() {
     private var autoMode = false
     private var autoJob: Job? = null
     private var connecting = false
+    private var syncing = false
+    private var fromCache = false
     private var pendingExport: List<CameraFile>? = null
     private var wasRunning = false
     private var receiverRegistered = false
@@ -89,8 +91,8 @@ class MainActivity : AppCompatActivity() {
 
         adapter = FileAdapter(
             loader = { CameraHub.thumbnailBytes(it) },
-            onTap = { toggleSelect(it) },
-            onLongPress = { preview(it) }
+            onOpen = { preview(it) },
+            onSelect = { toggleSelect(it) }
         )
         recycler.layoutManager = GridLayoutManager(this, 2)
         recycler.adapter = adapter
@@ -209,23 +211,47 @@ class MainActivity : AppCompatActivity() {
             }
             connecting = false
             updateStatus()
-            if (ok) loadFiles()
+            if (ok) {
+                showCachedListing()
+                loadFiles()
+            }
         }
     }
 
+    /** 上次的清单先铺上去，别让用户盯着空列表等扫卡。 */
+    private suspend fun showCachedListing() {
+        if (allFiles.isNotEmpty()) return
+        val cached = withContext(Dispatchers.IO) { ListingCache.load(this@MainActivity) }
+        if (cached.isEmpty()) return
+        allFiles = cached
+        fromCache = true
+        render()
+        statusDetail.text = getString(R.string.cache_hint, cached.size)
+    }
+
     private fun loadFiles() {
-        statusDetail.text = getString(R.string.reading)
+        if (syncing) return
+        syncing = true
+        if (!fromCache) statusDetail.text = getString(R.string.reading)
         lifecycleScope.launch {
+            var failed = false
             val files = try {
                 CameraHub.listFiles()
             } catch (e: Exception) {
+                Diag.error("sync", "扫描存储卡失败", e)
+                failed = true
                 emptyList()
             }
-            allFiles = files
-            selected.clear()
+            syncing = false
+            if (!failed) {
+                allFiles = files
+                fromCache = false
+                selected.clear()
+                withContext(Dispatchers.IO) { ListingCache.save(this@MainActivity, files) }
+            }
             render()
             updateStatus()
-            if (files.isEmpty()) toast(getString(R.string.no_files))
+            if (!failed && files.isEmpty()) toast(getString(R.string.no_files))
         }
     }
 
@@ -324,6 +350,10 @@ class MainActivity : AppCompatActivity() {
     // ---------------- 导出 ----------------
 
     private fun doExport() {
+        if (fromCache) {
+            toast(getString(R.string.cache_wait))
+            return
+        }
         val list = if (selected.isEmpty()) {
             visibleFiles
         } else {
@@ -401,30 +431,11 @@ class MainActivity : AppCompatActivity() {
             toast(getString(R.string.video_no_preview))
             return
         }
-        toast(getString(R.string.loading_preview))
-        lifecycleScope.launch {
-            val bytes = PreviewCache.load(this@MainActivity, f)
-            if (bytes == null) {
-                toast(getString(R.string.preview_failed))
-                return@launch
-            }
-            val bitmap = withContext(Dispatchers.Default) { Thumbs.decode(bytes, 1600) }
-            if (bitmap == null) {
-                toast(getString(R.string.preview_failed))
-                return@launch
-            }
-            val image = ImageView(this@MainActivity).apply {
-                setImageBitmap(bitmap)
-                adjustViewBounds = true
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                setPadding(12, 12, 12, 12)
-            }
-            AlertDialog.Builder(this@MainActivity)
-                .setTitle(f.name)
-                .setView(image)
-                .setPositiveButton(android.R.string.ok, null)
-                .show()
+        if (fromCache) {
+            toast(getString(R.string.cache_wait))
+            return
         }
+        startActivity(PreviewActivity.intent(this, f))
     }
 
     // ---------------- 菜单 ----------------

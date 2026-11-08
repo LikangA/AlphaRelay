@@ -98,22 +98,22 @@ def slice_jpeg(b, offset, size):
 
 def scan_largest(b, ln):
     best = None
+    stack = []
     i = 0
     while i + 1 < ln:
         if b[i] == 0xFF and b[i + 1] == 0xD8:
-            j = i + 2
-            while j + 1 < ln:
-                if b[j] == 0xFF and b[j + 1] == 0xD9:
-                    break
-                j += 1
-            if j + 1 >= ln:
-                break
-            size = j + 2 - i
-            if size > 4096 and (best is None or size > len(best)):
-                best = b[i:j + 2]
-            i = j + 2
-        else:
-            i += 1
+            if len(stack) < 32:
+                stack.append(i)
+            i += 2
+            continue
+        if b[i] == 0xFF and b[i + 1] == 0xD9 and stack:
+            start = stack.pop()
+            size = i + 2 - start
+            if size > 2048 and (best is None or size > len(best)):
+                best = b[start:i + 2]
+            i += 2
+            continue
+        i += 1
     return best
 
 
@@ -224,6 +224,13 @@ def main():
     for junk in (b"", b"\x00" * 10, bytes(range(32)), b"II*\x00" + b"\xff" * 60):
         extract(junk)
     print("6. 垃圾输入不崩          OK")
+
+    # 7. 截断的外层 JPEG，里面嵌着完整的 EXIF 缩略图（模拟只读前 256KB 的 JPEG）
+    thumb = make_jpeg(3000, 0x33)
+    truncated = b"\xff\xd8\xff\xe1" + b"\x00" * 500 + thumb + b"\x22" * 8000
+    got = extract(truncated)
+    assert got == thumb, "截断 JPEG 内的缩略图没找到"
+    print("7. 截断JPEG内嵌缩略图    OK  (%d bytes)" % len(got))
 
     print("\n全部通过")
 

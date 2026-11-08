@@ -121,23 +121,34 @@ object PreviewExtractor {
         return if (end - start > 4096) buf.copyOfRange(start, end) else null
     }
 
+    /**
+     * 在任意字节流里找最大的完整 JPEG。
+     * 用 SOI/EOI 配对栈，而不是「遇到 SOI 就往后找 EOI」——
+     * 因为截断的 JPEG（只读了前 256KB）没有外层 EOI，但里面嵌着完整的 EXIF 缩略图。
+     */
     private fun scanForLargestJpeg(buf: ByteArray, len: Int): ByteArray? {
         var best: ByteArray? = null
+        val stack = IntArray(32)
+        var top = 0
         var i = 0
         while (i + 1 < len) {
-            if ((buf[i].toInt() and 0xFF) == 0xFF && (buf[i + 1].toInt() and 0xFF) == 0xD8) {
-                var j = i + 2
-                while (j + 1 < len) {
-                    if ((buf[j].toInt() and 0xFF) == 0xFF && (buf[j + 1].toInt() and 0xFF) == 0xD9) break
-                    j++
-                }
-                if (j + 1 >= len) break
-                val size = j + 2 - i
-                if (size > 4096 && (best == null || size > best.size)) best = buf.copyOfRange(i, j + 2)
-                i = j + 2
-            } else {
-                i++
+            val a = buf[i].toInt() and 0xFF
+            val b = buf[i + 1].toInt() and 0xFF
+            if (a == 0xFF && b == 0xD8) {
+                if (top < stack.size) stack[top++] = i
+                i += 2
+                continue
             }
+            if (a == 0xFF && b == 0xD9 && top > 0) {
+                val start = stack[--top]
+                val size = i + 2 - start
+                if (size > 2048 && (best == null || size > best.size)) {
+                    best = buf.copyOfRange(start, i + 2)
+                }
+                i += 2
+                continue
+            }
+            i++
         }
         return best
     }

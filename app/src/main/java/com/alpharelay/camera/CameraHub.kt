@@ -285,8 +285,10 @@ object CameraHub {
     }
 
     /**
-     * 取缩略图。JPEG 走 MTP 缩略图；RAW 的 MTP 缩略图常常是空的，
-     * 这时只读文件前 6MB，从 TIFF 结构里抠内嵌预览图，不用下载整张。
+     * 取缩略图。三级兜底：
+     * 1. MTP 自带的 GetThumb（最快，多数相机有）；
+     * 2. 只读文件头部，从 TIFF/EXIF 里抠内嵌预览（RAW 读 6MB，JPEG/HEIF 读 256KB）；
+     * 3. 都没有就返回 null，界面显示占位图。
      */
     suspend fun thumbnailBytes(f: CameraFile): ByteArray? = withContext(dispatcher) {
         val dev = device ?: return@withContext null
@@ -296,24 +298,44 @@ object CameraHub {
         } catch (e: Exception) {
             null
         }
-        if (thumb != null && thumb.size > 512) return@withContext thumb
+        if (thumb != null && thumb.size > 512) {
+            logThumb(f, "mtp=${thumb.size}")
+            return@withContext thumb
+        }
 
-        if (f.kind == FileKind.RAW) {
-            val cap = minOf(f.size, 6L * 1024L * 1024L).toInt()
-            if (cap > 64 * 1024) {
-                val buffer = ByteArray(cap)
-                val read = try {
-                    dev.getPartialObject(f.handle, 0L, cap.toLong(), buffer)
-                } catch (e: Exception) {
-                    -1L
+        val cap = when (f.kind) {
+            FileKind.RAW -> 6L * 1024L * 1024L
+            FileKind.JPEG, FileKind.HEIF -> 256L * 1024L
+            else -> 64L * 1024L
+        }
+        val readSize = minOf(f.size.coerceAtLeast(0L), cap).toInt()
+        if (readSize > 16 * 1024) {
+            val buffer = ByteArray(readSize)
+            val read = try {
+                dev.getPartialObject(f.handle, 0L, readSize.toLong(), buffer)
+            } catch (e: Exception) {
+                -1L
+            }
+            if (read > 0) {
+                val jpeg = PreviewExtractor.extract(buffer, read.toInt())
+                if (jpeg != null) {
+                    logThumb(f, "partial=$read preview=${jpeg.size}")
+                    return@withContext jpeg
                 }
-                if (read > 0) {
-                    val jpeg = PreviewExtractor.extract(buffer, read.toInt())
-                    if (jpeg != null) return@withContext jpeg
-                }
+                logThumb(f, "partial=$read 无内嵌预览")
+            } else {
+                logThumb(f, "partial 不支持")
             }
         }
         null
+    }
+
+    private var thumbLogCount = 0
+
+    private fun logThumb(f: CameraFile, text: String) {
+        if (thumbLogCount >= 4) return
+        thumbLogCount++
+        Diag.info("thumb", "${f.name} [${f.kind.label}] ${f.size}B -> $text")
     }
 
     suspend fun download(f: CameraFile, dest: File): Boolean = withContext(dispatcher) {

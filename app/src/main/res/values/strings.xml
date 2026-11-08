@@ -54,6 +54,12 @@
     <string name="video_no_preview">视频不支持预览，导出后可在相册里播放</string>
     <string name="loading_preview">正在读取预览…</string>
     <string name="preview_failed">预览读取失败，可以试试导出后查看</string>
+    <string name="preview_loading">正在从相机读取…</string>
+    <string name="preview_retry_hint">点这里重试</string>
+    <string name="preview_decode_failed">图片解码失败</string>
+    <string name="cache_hint">已显示上次的 %1$d 个文件，正在后台同步存储卡…</string>
+    <string name="cache_wait">正在同步存储卡，稍等几秒再试</string>
+    <string name="gesture_hint">点一下看大图 · 长按选中</string>
 
     <string name="auto_need_camera">先连上相机再开启即拍即传</string>
     <string name="auto_on">即拍即传已开启：连着线拍，新照片会自动导出</string>

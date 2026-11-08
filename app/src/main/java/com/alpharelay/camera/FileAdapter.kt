@@ -1,8 +1,5 @@
 package com.alpharelay.camera
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.util.LruCache
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -17,46 +14,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-object Thumbs {
-
-    private val cache = object : LruCache<String, Bitmap>(64 * 1024 * 1024) {
-        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
-    }
-
-    fun get(key: String): Bitmap? = cache.get(key)
-
-    fun put(key: String, bitmap: Bitmap) {
-        cache.put(key, bitmap)
-    }
-
-    fun clear() {
-        cache.evictAll()
-    }
-
-    fun decode(bytes: ByteArray, maxDimension: Int): Bitmap? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        val width = bounds.outWidth
-        val height = bounds.outHeight
-        if (width <= 0 || height <= 0) return null
-
-        var sample = 1
-        while (width / (sample * 2) >= maxDimension && height / (sample * 2) >= maxDimension) {
-            sample *= 2
-        }
-        val options = BitmapFactory.Options().apply { inSampleSize = sample }
-        return try {
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-        } catch (e: OutOfMemoryError) {
-            null
-        }
-    }
-}
-
 class FileAdapter(
     private val loader: suspend (CameraFile) -> ByteArray?,
-    private val onTap: (CameraFile) -> Unit,
-    private val onLongPress: (CameraFile) -> Unit
+    private val onOpen: (CameraFile) -> Unit,
+    private val onSelect: (CameraFile) -> Unit
 ) : RecyclerView.Adapter<FileAdapter.Holder>() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -108,30 +69,43 @@ class FileAdapter(
             badge.text = item.kind.label
             check.visibility = if (isSelected) View.VISIBLE else View.GONE
             card.strokeWidth = if (isSelected) dp(2) else 0
-            card.setOnClickListener { onTap(item) }
+
+            // 点击看大图，长按选中
+            card.setOnClickListener { onOpen(item) }
             card.setOnLongClickListener {
-                onLongPress(item)
+                onSelect(item)
                 true
             }
 
+            val key = Thumbs.keyOf(item)
             loadJob?.cancel()
-            thumb.tag = item.handle
-            val key = item.handle.toString()
-            val cached = Thumbs.get(key)
-            if (cached != null) {
-                thumb.setImageBitmap(cached)
+            thumb.tag = key
+
+            val memory = Thumbs.cached(key)
+            if (memory != null) {
+                thumb.setImageBitmap(memory)
                 return
             }
             thumb.setImageResource(R.drawable.ph_photo)
+
             loadJob = scope.launch {
-                val bytes = try {
-                    loader(item)
-                } catch (e: Exception) {
-                    null
-                } ?: return@launch
-                val bitmap = withContext(Dispatchers.Default) { Thumbs.decode(bytes, 480) } ?: return@launch
-                Thumbs.put(key, bitmap)
-                if (thumb.tag == item.handle) thumb.setImageBitmap(bitmap)
+                val context = itemView.context.applicationContext
+                var bytes = Thumbs.diskBytes(context, key)
+                if (bytes == null) {
+                    val remote = try {
+                        loader(item)
+                    } catch (e: Exception) {
+                        null
+                    }
+                    if (remote != null) {
+                        Thumbs.saveDisk(context, key, remote)
+                        bytes = remote
+                    }
+                }
+                val data = bytes ?: return@launch
+                val bitmap = withContext(Dispatchers.Default) { Thumbs.decode(data, 480) } ?: return@launch
+                Thumbs.remember(key, bitmap)
+                if (thumb.tag == key) thumb.setImageBitmap(bitmap)
             }
         }
 
