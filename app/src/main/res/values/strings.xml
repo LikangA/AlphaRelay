@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AlphaRelay 相机直传</string>
+
+    <string name="status_disconnected">未连接相机</string>
+    <string name="status_hint">用 USB-C 数据线把相机连到手机，相机菜单里把「USB 连接」设为「MTP」。</string>
+    <string name="status_perm">等待 USB 授权</string>
+    <string name="status_perm_hint">系统弹窗里勾选「默认用于该设备」再点允许，下次插线就不用再授权。</string>
+    <string name="status_connecting">正在连接相机</string>
+    <string name="status_connecting_hint">保持相机开机，屏幕别睡。</string>
+    <string name="status_ready">相机已连接</string>
+    <string name="status_ready_hint">点右上角刷新可以重新读取存储卡。</string>
+    <string name="status_error">连接失败</string>
+    <string name="status_storage">%1$s · 剩余 %2$s / 共 %3$s</string>
+    <string name="reading">正在读取存储卡…</string>
+    <string name="no_files">存储卡里没有找到可导出的文件</string>
+
+    <string name="empty_no_camera">还没有相机\n\n1. 相机开机，USB 连接设为 MTP\n2. 用支持数据传输的 USB-C 线连接\n3. 手机上允许 AlphaRelay 访问该 USB 设备</string>
+    <string name="empty_no_files">这个筛选条件下没有文件</string>
+
+    <string name="summary">共 %1$d 个文件 · 已选 %2$d 个</string>
+    <string name="summary_placeholder">未连接相机</string>
+    <string name="export_all">导出全部 (%1$d)</string>
+    <string name="export_selected">导出 (%1$d)</string>
+    <string name="export_all_plain">导出</string>
+    <string name="select_all">全选</string>
+    <string name="clear_selection">取消选择</string>
+    <string name="cancel">取消</string>
+    <string name="nothing_to_export">没有可导出的文件</string>
+
+    <string name="filter_all">全部</string>
+    <string name="filter_raw">RAW</string>
+    <string name="filter_jpeg">JPEG</string>
+    <string name="filter_heif">HEIF</string>
+    <string name="filter_video">视频</string>
+
+    <string name="menu_refresh">刷新</string>
+    <string name="menu_reconnect">重新连接</string>
+    <string name="menu_auto">即拍即传</string>
+    <string name="menu_about">说明与限制</string>
+    <string name="menu_clear_index">清空导出记录</string>
+    <string name="menu_diag">诊断日志</string>
+    <string name="diag_copy">复制</string>
+    <string name="copied">已复制到剪贴板</string>
+    <string name="index_cleared">导出记录已清空，下次会重新导出</string>
+
+    <string name="perm_denied">没有 USB 权限，无法读取相机</string>
+    <string name="camera_detached">相机已断开</string>
+    <string name="need_storage_perm">需要存储权限才能保存到相册</string>
+
+    <string name="progress_line">正在导出 %1$d / %2$d\n%3$s</string>
+    <string name="progress_done">准备中…</string>
+
+    <string name="video_no_preview">视频不支持预览，导出后可在相册里播放</string>
+    <string name="loading_preview">正在读取预览…</string>
+    <string name="preview_failed">预览读取失败，可以试试导出后查看</string>
+
+    <string name="auto_need_camera">先连上相机再开启即拍即传</string>
+    <string name="auto_on">即拍即传已开启：连着线拍，新照片会自动导出</string>
+    <string name="auto_off">已关闭即拍即传</string>
+    <string name="auto_new">发现 %1$d 张新照片，正在自动导出</string>
+
+    <string name="thumb_desc">照片缩略图</string>
+    <string name="selected_desc">已选中</string>
+    <string name="already_exported">已导出</string>
+
+    <string name="about_text">为什么官方 App 导不出 RAW\nSony 的无线传输会先把 RAW 转成 JPEG 再发到手机，A7C 的官方说明里明确写了「RAW 图像会转换成 JPEG 发送」。所以无线这条路拿不到 ARW 原始文件。\n\n这个 App 怎么做的\n把相机当成 USB 上的 MTP 设备，直接读存储卡里的原始文件，不做任何转换。ARW、JPEG、HEIF、MP4 全部按原样导出，落在相册的 AlphaRelay 文件夹里，并按拍摄日期分子目录。\n\n导出细节\n已导过的文件按「文件名 + 大小 + 修改时间」跳过，不会重复占空间；换卡或想重导时，用菜单里的「清空导出记录」。\n\n做不到的事\n1. 无线传 RAW：Sony 没有开放这个接口。\n2. USB 实时取景：那是 PC Remote 模式，需要 Sony 的电脑端 SDK。\n3. 遥控快门。\n\n实时看照片\n打开右上角菜单里的「即拍即传」，App 每 5 秒扫一次卡，新拍的照片几秒内自动出现在列表并开始导出。部分机型需要点「重新连接」才能看到新拍的图。\n\n提示\nARW 缩略图是从 RAW 内嵌的预览图里抠出来的，第一次看会慢一点，之后走缓存。出问题可以在菜单里打开「诊断日志」复制出来。</string>
+</resources>

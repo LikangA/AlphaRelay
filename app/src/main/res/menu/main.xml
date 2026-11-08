@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <item
+        android:id="@+id/action_refresh"
+        android:title="@string/menu_refresh"
+        app:showAsAction="ifRoom" />
+
+    <item
+        android:id="@+id/action_auto"
+        android:checkable="true"
+        android:title="@string/menu_auto"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_reconnect"
+        android:title="@string/menu_reconnect"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_clear_index"
+        android:title="@string/menu_clear_index"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_diag"
+        android:title="@string/menu_diag"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_about"
+        android:title="@string/menu_about"
+        app:showAsAction="never" />
+</menu>
