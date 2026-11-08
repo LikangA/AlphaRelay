@@ -93,7 +93,7 @@ class MainActivity : AppCompatActivity() {
         selectAllButton = findViewById(R.id.btnSelectAll)
 
         adapter = FileAdapter(
-            loader = { CameraHub.thumbnailBytes(it) },
+            loader = { CameraHub.thumbnailBytes(it, true) },
             onOpen = { preview(it) },
             onSelect = { toggleSelect(it) }
         )
@@ -258,6 +258,9 @@ class MainActivity : AppCompatActivity() {
             updateStatus()
             openPending()
             if (!failed) prefetch(allFiles, true)
+            if (!failed && CameraHub.lastScanAborted) {
+                toast(getString(R.string.scan_partial, allFiles.size))
+            }
             if (!failed && files.isEmpty()) toast(getString(R.string.no_files))
         }
     }
@@ -282,7 +285,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 扫到 100 个就先铺上去，不用等整张卡扫完。 */
+    /** 扫到 200 个就先铺上去，不用等整张卡扫完。 */
     private fun onPartialList(partial: List<CameraFile>) {
         lifecycleScope.launch(Dispatchers.Main) {
             if (!syncing) return@launch
@@ -291,7 +294,10 @@ class MainActivity : AppCompatActivity() {
             render()
             statusDetail.text = getString(R.string.reading_progress, partial.size)
             openPending()
-            prefetch(allFiles, false)
+        }
+        // 扫描中途也落一份盘：万一相机中途睡着导致扫描卡住，下次还能先把这批显示出来
+        lifecycleScope.launch(Dispatchers.IO) {
+            ListingCache.save(applicationContext, partial)
         }
     }
 
@@ -602,9 +608,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun showDiagnostics() {
         val text = Diag.dump()
+        val view = layoutInflater.inflate(R.layout.dialog_log, null)
+        val body = view.findViewById<TextView>(R.id.logText)
+        body.text = text
         AlertDialog.Builder(this)
             .setTitle(R.string.menu_diag)
-            .setMessage(text)
+            .setView(view)
             .setPositiveButton(R.string.diag_copy) { _, _ -> copyToClipboard(text) }
             .setNegativeButton(android.R.string.cancel, null)
             .show()

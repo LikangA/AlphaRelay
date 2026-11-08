@@ -135,6 +135,7 @@ object CameraHub {
         storageId = storages.first().id
         val model = runCatching { dev.deviceInfo?.model ?: "" }.getOrDefault("")
         Diag.info("mtp", "连接成功 model=$model storages=${storages.size} storageId=$storageId")
+        fullDownloadBudget = 400
         _link.value = Link(phase = Phase.READY, model = model, storages = storages)
         true
     }
@@ -159,7 +160,7 @@ object CameraHub {
         return result
     }
 
-    /** 完整枚举：每 100 个文件回吐一次，界面可以边扫边显示。 */
+    /** 完整枚举：每 200 个文件回吐一次，界面可以边扫边显示。 */
     suspend fun listFiles(onProgress: ((List<CameraFile>) -> Unit)? = null): List<CameraFile> =
         withContext(dispatcher) {
             val dev = device ?: return@withContext emptyList()
@@ -168,11 +169,23 @@ object CameraHub {
             val roots = queryRoots(dev) ?: return@withContext emptyList()
             val out = ArrayList<CameraFile>(1024)
             val seen = HashSet<Int>(1024)
+            scanCount = 0
+            scanAborted = false
+            scanStart = System.currentTimeMillis()
+            scanDeadline = scanStart + SCAN_BUDGET_MS
+            Diag.info("scan", "开始扫卡：根节点 ${roots.size} 个")
             // handle 一般是按建档顺序递增的，倒着走能先碰到最新拍的那批，
             // 这样「边扫边显示」和「优先缓存新照片预览」都从最新的开始。
             for (handle in roots.reversed()) walkFiles(dev, handle, 0, seen, out, onProgress)
+
+            val seconds = (System.currentTimeMillis() - scanStart) / 1000
+            lastScanAborted = scanAborted
+            if (scanAborted) {
+                Diag.info("scan", "扫描超时中断：已读 ${out.size} 个，用时 ${seconds}s")
+            } else {
+                Diag.info("mtp", "枚举完成，共 ${out.size} 个文件，用时 ${seconds}s")
+            }
             out.sortWith(compareByDescending<CameraFile> { it.modifiedSec }.thenByDescending { it.name })
-            Diag.info("mtp", "枚举完成，共 ${out.size} 个文件")
             out
         }
 
@@ -191,7 +204,7 @@ object CameraHub {
         }
     }
 
-    private fun walkFiles(
+    private suspend fun walkFiles(
         dev: MtpDevice,
         handle: Int,
         depth: Int,
@@ -201,10 +214,23 @@ object CameraHub {
     ) {
         if (out.size >= 8000) return
         if (!seen.add(handle)) return
+        if (scanAborted) return
+
+        // 相机不响应时别把用户永远挂住：超预算就带着已有结果收工。
+        if (System.currentTimeMillis() > scanDeadline) {
+            scanAborted = true
+            return
+        }
+
+        // 每 25 个对象停一下：给相机喘口气，也让出 USB 线程响应界面上的缩略图请求。
+        // 索尼的 MTP 栈连续高频取 ObjectInfo 时容易不响应。
+        scanCount++
+        if (scanCount % 25 == 0) delay(2)
 
         val info = try {
             dev.getObjectInfo(handle)
         } catch (e: Exception) {
+            Diag.error("scan", "getObjectInfo(handle=$handle) 失败", e)
             null
         } ?: return
 
@@ -213,8 +239,10 @@ object CameraHub {
             val children = try {
                 dev.getObjectHandles(storageId, 0, handle)
             } catch (e: Exception) {
+                Diag.error("scan", "getObjectHandles(handle=$handle) 失败", e)
                 null
             } ?: return
+            Diag.info("scan", "进入 ${info.name}（${children.size} 项）")
             for (child in children.reversed()) walkFiles(dev, child, depth + 1, seen, out, onProgress)
         } else {
             val name = info.name ?: return
@@ -229,8 +257,10 @@ object CameraHub {
                     kind = Formats.kindOf(name)
                 )
             )
-            if (onProgress != null && out.size % 100 == 0) {
-                onProgress(ArrayList(out))
+            if (out.size % 200 == 0) {
+                val seconds = (System.currentTimeMillis() - scanStart) / 1000
+                Diag.info("scan", "已读 ${out.size} 个文件，用时 ${seconds}s")
+                if (onProgress != null) onProgress(ArrayList(out))
             }
         }
     }
@@ -297,7 +327,7 @@ object CameraHub {
      * 2. 只读文件头部，从 TIFF/EXIF 里抠内嵌预览（RAW 读 6MB，JPEG/HEIF 读 256KB）；
      * 3. 都没有就返回 null，界面显示占位图。
      */
-    suspend fun thumbnailBytes(f: CameraFile): ByteArray? = withContext(dispatcher) {
+    suspend fun thumbnailBytes(f: CameraFile, allowFullDownload: Boolean = false): ByteArray? = withContext(dispatcher) {
         val dev = device ?: return@withContext null
 
         val thumb = try {
@@ -328,7 +358,7 @@ object CameraHub {
             }
             if (read <= 0L) {
                 logThumb(f, "partial 不支持")
-                return@withContext null
+                break
             }
             val jpeg = PreviewExtractor.extract(buffer, read.toInt())
             if (jpeg != null) {
@@ -337,11 +367,56 @@ object CameraHub {
             }
             if (read < readSize) break
         }
+
+        // 最后一招：这台机器既不支持 GetThumb 也不支持 GetPartialObject 时，
+        // 只能把整份文件读下来再抠预览。慢，但至少能出图，且只对「正在看」和「最新的一批」做。
+        if (allowFullDownload && fullDownloadBudget > 0 && f.size in 1L..MAX_FULL_THUMB_BYTES) {
+            val ctx = app
+            if (ctx != null) {
+                fullDownloadBudget--
+                val temp = File(ctx.cacheDir, "thumb_${f.handle}.bin")
+                try {
+                    val mode = ParcelFileDescriptor.MODE_CREATE or
+                        ParcelFileDescriptor.MODE_WRITE_ONLY or
+                        ParcelFileDescriptor.MODE_TRUNCATE
+                    ParcelFileDescriptor.open(temp, mode).use { pfd ->
+                        dev.importFile(f.handle, pfd)
+                    }
+                    val raw = temp.readBytes()
+                    val jpeg = if (f.kind == FileKind.RAW) PreviewExtractor.extract(raw) else raw
+                    if (jpeg != null) {
+                        logThumb(f, "full=${raw.size} preview=${jpeg.size}")
+                        return@withContext jpeg
+                    }
+                    logThumb(f, "full=${raw.size} 无预览")
+                } catch (e: Exception) {
+                    Diag.error("thumb", "整份读取 ${f.name} 失败", e)
+                } finally {
+                    runCatching { temp.delete() }
+                }
+            }
+        }
+
         logThumb(f, "无内嵌预览")
         null
     }
 
+    private var fullDownloadBudget = 400
+    private val MAX_FULL_THUMB_BYTES = 80L * 1024L * 1024L
+
     private var thumbLogCount = 0
+    private var scanCount = 0
+    private var scanStart = 0L
+    private var scanDeadline = 0L
+    private var scanAborted = false
+
+    /** 扫卡总预算；超过就带着已读到的结果返回，并把 lastScanAborted 置为 true。 */
+    private const val SCAN_BUDGET_MS = 180_000L
+
+    /** 上一次扫描是否因超时被截断，界面据此提示用户。 */
+    @Volatile
+    var lastScanAborted = false
+        private set
 
     private fun logThumb(f: CameraFile, text: String) {
         if (thumbLogCount >= 4) return

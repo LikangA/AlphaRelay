@@ -20,6 +20,9 @@ object ThumbPrefetcher {
     private var job: Job? = null
     private val failed = HashSet<String>()
 
+    /** 只有最新的这么多张允许整份读取兜底。 */
+    private const val FULL_DOWNLOAD_LIMIT = 40
+
     fun ensure(
         scope: CoroutineScope,
         context: Context,
@@ -78,8 +81,10 @@ object ThumbPrefetcher {
                 while (ExportBus.state.value.running) delay(500)
 
                 val key = Thumbs.keyOf(f)
+                // 最新的一批允许「整份读取」兜底；更老的只走便宜的路径，避免一次插线搬几十 GB
+                val allowFull = index < FULL_DOWNLOAD_LIMIT
                 val bytes = try {
-                    CameraHub.thumbnailBytes(f)
+                    CameraHub.thumbnailBytes(f, allowFull)
                 } catch (e: Exception) {
                     null
                 }

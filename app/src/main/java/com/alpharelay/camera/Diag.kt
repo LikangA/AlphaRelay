@@ -14,7 +14,7 @@ import java.util.Locale
  */
 object Diag {
 
-    private const val MAX_LINES = 300
+    private const val MAX_LINES = 600
     private const val FILE_MAX_BYTES = 256 * 1024
 
     private val lines = ArrayDeque<String>()
