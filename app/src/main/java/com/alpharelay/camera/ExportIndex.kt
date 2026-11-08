@@ -21,7 +21,8 @@ object ExportIndex {
     @Synchronized
     private fun set(context: Context): MutableSet<String> {
         cached?.let { return it }
-        val stored = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getStringSet(KEY, null)
+        val stored = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getStringSet(KEY, emptySet<String>())
         val fresh = if (stored == null) HashSet() else HashSet(stored)
         cached = fresh
         return fresh
