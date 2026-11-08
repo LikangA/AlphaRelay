@@ -49,6 +49,11 @@ object Thumbs {
         return File(dir, hashName(key) + ".jpg")
     }
 
+    suspend fun hasDisk(context: Context, key: String): Boolean = withContext(Dispatchers.IO) {
+        val file = diskFile(context, key)
+        file.exists() && file.length() > 1024
+    }
+
     suspend fun diskBytes(context: Context, key: String): ByteArray? = withContext(Dispatchers.IO) {
         val file = diskFile(context, key)
         if (!file.exists() || file.length() < 1024) return@withContext null

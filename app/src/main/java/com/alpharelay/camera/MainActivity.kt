@@ -67,8 +67,11 @@ class MainActivity : AppCompatActivity() {
     private var syncing = false
     private var fromCache = false
     private var pendingExport: List<CameraFile>? = null
+    private var pendingOpenName: String? = null
     private var wasRunning = false
     private var receiverRegistered = false
+
+    private val sortOrder = compareByDescending<CameraFile> { it.modifiedSec }.thenByDescending { it.name }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -154,6 +157,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> tryConnect()
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                    ThumbPrefetcher.cancel()
                     CameraHub.onDeviceDetached()
                     allFiles = emptyList()
                     selected.clear()
@@ -200,6 +204,7 @@ class MainActivity : AppCompatActivity() {
     private fun connectDevice(device: UsbDevice) {
         if (connecting) return
         connecting = true
+        ThumbPrefetcher.cancel()
         statusTitle.text = getString(R.string.status_connecting)
         statusDetail.text = getString(R.string.status_connecting_hint)
         lifecycleScope.launch {
@@ -236,7 +241,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             var failed = false
             val files = try {
-                CameraHub.listFiles()
+                CameraHub.listFiles { partial -> onPartialList(partial) }
             } catch (e: Exception) {
                 Diag.error("sync", "扫描存储卡失败", e)
                 failed = true
@@ -251,8 +256,51 @@ class MainActivity : AppCompatActivity() {
             }
             render()
             updateStatus()
+            openPending()
+            if (!failed) prefetch(allFiles, true)
             if (!failed && files.isEmpty()) toast(getString(R.string.no_files))
         }
+    }
+
+    /** 后台补缩略图：新照片优先，从最新的开始。 */
+    private fun prefetch(files: List<CameraFile>, restart: Boolean) {
+        if (files.isEmpty()) return
+        val progress: (Int, Int) -> Unit = { done, total ->
+            lifecycleScope.launch(Dispatchers.Main) {
+                if (!syncing) statusDetail.text = getString(R.string.prefetch_progress, done, total)
+            }
+        }
+        val done: () -> Unit = {
+            lifecycleScope.launch(Dispatchers.Main) {
+                if (!syncing) updateStatus()
+            }
+        }
+        if (restart) {
+            ThumbPrefetcher.restart(lifecycleScope, this, files, progress, done)
+        } else {
+            ThumbPrefetcher.ensure(lifecycleScope, this, files, progress, done)
+        }
+    }
+
+    /** 扫到 100 个就先铺上去，不用等整张卡扫完。 */
+    private fun onPartialList(partial: List<CameraFile>) {
+        lifecycleScope.launch(Dispatchers.Main) {
+            if (!syncing) return@launch
+            allFiles = partial.sortedWith(sortOrder)
+            fromCache = false
+            render()
+            statusDetail.text = getString(R.string.reading_progress, partial.size)
+            openPending()
+            prefetch(allFiles, false)
+        }
+    }
+
+    /** 缓存里点的那张，等它扫出来再自动打开。 */
+    private fun openPending() {
+        val name = pendingOpenName ?: return
+        val target = allFiles.firstOrNull { it.name == name } ?: return
+        pendingOpenName = null
+        startActivity(PreviewActivity.intent(this, target))
     }
 
     // ---------------- UI ----------------
@@ -431,8 +479,12 @@ class MainActivity : AppCompatActivity() {
             toast(getString(R.string.video_no_preview))
             return
         }
-        if (fromCache) {
-            toast(getString(R.string.cache_wait))
+        // 缓存里的 handle 是上一次会话的，不能直接拿去读。
+        // 但这张图之前看过的话，预览 JPEG 还在手机上，直接打开就行。
+        if (fromCache && !PreviewCache.has(this, f)) {
+            pendingOpenName = f.name
+            toast(getString(R.string.pending_open))
+            loadFiles()
             return
         }
         startActivity(PreviewActivity.intent(this, f))

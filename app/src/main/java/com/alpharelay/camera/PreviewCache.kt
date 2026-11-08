@@ -13,6 +13,11 @@ object PreviewCache {
     private fun fileFor(context: Context, f: CameraFile): File =
         File(dir(context), Thumbs.hashName(Thumbs.keyOf(f)) + ".jpg")
 
+    fun has(context: Context, f: CameraFile): Boolean {
+        val file = fileFor(context, f)
+        return file.exists() && file.length() > 1024
+    }
+
     fun read(context: Context, f: CameraFile): ByteArray? {
         val file = fileFor(context, f)
         if (!file.exists() || file.length() < 1024) return null

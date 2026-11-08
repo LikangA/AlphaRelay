@@ -159,19 +159,22 @@ object CameraHub {
         return result
     }
 
-    /** 完整枚举：每个文件都取一次 info，比较慢，只在进入/刷新时用。 */
-    suspend fun listFiles(): List<CameraFile> = withContext(dispatcher) {
-        val dev = device ?: return@withContext emptyList()
-        if (storageId == 0) return@withContext emptyList()
+    /** 完整枚举：每 100 个文件回吐一次，界面可以边扫边显示。 */
+    suspend fun listFiles(onProgress: ((List<CameraFile>) -> Unit)? = null): List<CameraFile> =
+        withContext(dispatcher) {
+            val dev = device ?: return@withContext emptyList()
+            if (storageId == 0) return@withContext emptyList()
 
-        val roots = queryRoots(dev) ?: return@withContext emptyList()
-        val out = ArrayList<CameraFile>(1024)
-        val seen = HashSet<Int>(1024)
-        for (handle in roots) walkFiles(dev, handle, 0, seen, out)
-        out.sortWith(compareByDescending<CameraFile> { it.modifiedSec }.thenByDescending { it.name })
-        Diag.info("mtp", "枚举完成，共 ${out.size} 个文件")
-        out
-    }
+            val roots = queryRoots(dev) ?: return@withContext emptyList()
+            val out = ArrayList<CameraFile>(1024)
+            val seen = HashSet<Int>(1024)
+            // handle 一般是按建档顺序递增的，倒着走能先碰到最新拍的那批，
+            // 这样「边扫边显示」和「优先缓存新照片预览」都从最新的开始。
+            for (handle in roots.reversed()) walkFiles(dev, handle, 0, seen, out, onProgress)
+            out.sortWith(compareByDescending<CameraFile> { it.modifiedSec }.thenByDescending { it.name })
+            Diag.info("mtp", "枚举完成，共 ${out.size} 个文件")
+            out
+        }
 
     /** 规范写法是父节点传 -1 取根；少数机型不支持，退化成取「全部对象」。 */
     private fun queryRoots(dev: MtpDevice): IntArray? {
@@ -193,7 +196,8 @@ object CameraHub {
         handle: Int,
         depth: Int,
         seen: MutableSet<Int>,
-        out: MutableList<CameraFile>
+        out: MutableList<CameraFile>,
+        onProgress: ((List<CameraFile>) -> Unit)?
     ) {
         if (out.size >= 8000) return
         if (!seen.add(handle)) return
@@ -211,7 +215,7 @@ object CameraHub {
             } catch (e: Exception) {
                 null
             } ?: return
-            for (child in children) walkFiles(dev, child, depth + 1, seen, out)
+            for (child in children.reversed()) walkFiles(dev, child, depth + 1, seen, out, onProgress)
         } else {
             val name = info.name ?: return
             out.add(
@@ -225,6 +229,9 @@ object CameraHub {
                     kind = Formats.kindOf(name)
                 )
             )
+            if (onProgress != null && out.size % 100 == 0) {
+                onProgress(ArrayList(out))
+            }
         }
     }
 
@@ -303,30 +310,34 @@ object CameraHub {
             return@withContext thumb
         }
 
-        val cap = when (f.kind) {
-            FileKind.RAW -> 6L * 1024L * 1024L
-            FileKind.JPEG, FileKind.HEIF -> 256L * 1024L
-            else -> 64L * 1024L
+        // 从小到大试：多数机身的内嵌预览就藏在文件很靠前的位置，
+        // 先读 384KB 往往就够，命中不了再逐步加大，避免每张都读 6MB。
+        val caps = when (f.kind) {
+            FileKind.RAW -> longArrayOf(384L * 1024L, 1536L * 1024L, 6L * 1024L * 1024L)
+            FileKind.JPEG, FileKind.HEIF -> longArrayOf(128L * 1024L, 384L * 1024L)
+            else -> longArrayOf(64L * 1024L)
         }
-        val readSize = minOf(f.size.coerceAtLeast(0L), cap).toInt()
-        if (readSize > 16 * 1024) {
+        for (cap in caps) {
+            val readSize = minOf(f.size.coerceAtLeast(0L), cap).toInt()
+            if (readSize <= 16 * 1024) continue
             val buffer = ByteArray(readSize)
             val read = try {
                 dev.getPartialObject(f.handle, 0L, readSize.toLong(), buffer)
             } catch (e: Exception) {
                 -1L
             }
-            if (read > 0) {
-                val jpeg = PreviewExtractor.extract(buffer, read.toInt())
-                if (jpeg != null) {
-                    logThumb(f, "partial=$read preview=${jpeg.size}")
-                    return@withContext jpeg
-                }
-                logThumb(f, "partial=$read 无内嵌预览")
-            } else {
+            if (read <= 0L) {
                 logThumb(f, "partial 不支持")
+                return@withContext null
             }
+            val jpeg = PreviewExtractor.extract(buffer, read.toInt())
+            if (jpeg != null) {
+                logThumb(f, "partial=$read preview=${jpeg.size}")
+                return@withContext jpeg
+            }
+            if (read < readSize) break
         }
+        logThumb(f, "无内嵌预览")
         null
     }
 
