@@ -154,7 +154,7 @@ object CameraHub {
                 null
             } ?: continue
             val label = (info.description ?: "").ifBlank { "存储卡" }
-            result.add(Storage(id, label, info.maxCapacity, info.freeSpace))
+            result.add(Storage(id, label, info.maxCapacity.toLong(), info.freeSpace.toLong()))
         }
         return result
     }
@@ -218,7 +218,7 @@ object CameraHub {
                 CameraFile(
                     handle = handle,
                     name = name,
-                    size = info.compressedSize,
+                    size = info.compressedSize.toLong(),
                     modifiedSec = info.dateModified.toLong(),
                     width = info.imagePixWidth,
                     height = info.imagePixHeight,
@@ -273,7 +273,7 @@ object CameraHub {
                 CameraFile(
                     handle = handle,
                     name = name,
-                    size = info.compressedSize,
+                    size = info.compressedSize.toLong(),
                     modifiedSec = info.dateModified.toLong(),
                     width = info.imagePixWidth,
                     height = info.imagePixHeight,
@@ -323,9 +323,12 @@ object CameraHub {
             val mode = ParcelFileDescriptor.MODE_CREATE or
                 ParcelFileDescriptor.MODE_WRITE_ONLY or
                 ParcelFileDescriptor.MODE_TRUNCATE
+            // importFile(handle, ParcelFileDescriptor) 在 SDK 里是 void，
+            // 别拿它的返回值当成功标志，直接看落地文件大小。
             ParcelFileDescriptor.open(dest, mode).use { pfd ->
                 dev.importFile(f.handle, pfd)
             }
+            dest.exists() && dest.length() > 0L
         } catch (e: Exception) {
             Diag.error("download", "读取 ${f.name} 失败", e)
             false
